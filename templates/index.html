@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disney Pin Search</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="header">
+    <div class="castle"></div>
+    <h1 class="header-title">Disney Pin Search</h1>
+    <p class="header-sub">Search, discover, and collect your favorite Disney pins</p>
+</header>
+
+<main class="layout">
+    <!-- Sidebar: Search History -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>Search History</h2>
+            <button class="btn-text" onclick="PinSearch.clearHistory()">Clear</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="content">
+        <!-- Search Tabs -->
+        <div class="search-section">
+            <div class="tabs">
+                <button class="tab active" data-tab="keyword" onclick="PinSearch.switchTab('keyword')">Keyword Search</button>
+                <button class="tab" data-tab="lookup" onclick="PinSearch.switchTab('lookup')">Pin Number</button>
+                <button class="tab" data-tab="image" onclick="PinSearch.switchTab('image')">Image Search</button>
+            </div>
+
+            <!-- Keyword Search Panel -->
+            <div class="tab-panel active" id="panel-keyword">
+                <form onsubmit="event.preventDefault(); PinSearch.searchByKeyword()">
+                    <div class="input-row">
+                        <input type="text" id="keyword-input" placeholder="e.g. Mickey Mouse, Haunted Mansion..." autocomplete="off">
+                        <button type="submit" class="btn-primary">Search</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Pin Number Lookup Panel -->
+            <div class="tab-panel" id="panel-lookup">
+                <form onsubmit="event.preventDefault(); PinSearch.lookupByNumber()">
+                    <div class="input-row">
+                        <input type="text" id="pin-number-input" placeholder="Enter pin number (e.g. 12345)" autocomplete="off">
+                        <button type="submit" class="btn-primary">Look Up</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Image Search Panel -->
+            <div class="tab-panel" id="panel-image">
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <div class="drop-icon">&#128247;</div>
+                        <p>Drag & drop a pin photo here</p>
+                        <p class="drop-hint">or click to browse files</p>
+                    </div>
+                    <input type="file" id="image-input" accept="image/*" hidden>
+                </div>
+                <div id="image-preview" class="image-preview" style="display:none"></div>
+                <button class="btn-primary btn-image-search" onclick="PinSearch.searchByImage()" style="display:none" id="btn-image-search">Search by Image</button>
+            </div>
+
+            <!-- Source Filter -->
+            <div class="source-filter">
+                <span class="filter-label">Source:</span>
+                <label class="radio-label"><input type="radio" name="source" value="all" checked> All</label>
+                <label class="radio-label"><input type="radio" name="source" value="pinpics"> PinPics</label>
+                <label class="radio-label"><input type="radio" name="source" value="pintradingdb"> PinTradingDB</label>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="loading" style="display:none">
+            <div class="spinner"></div>
+            <p>Searching for pins...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div id="error-msg" class="error-msg" style="display:none"></div>
+
+        <!-- Search Results -->
+        <section id="results-section" class="results-section" style="display:none">
+            <div class="section-header">
+                <h2>Search Results</h2>
+                <span id="result-count" class="result-count"></span>
+            </div>
+            <div id="results-grid" class="pin-grid"></div>
+        </section>
+
+        <!-- My Collection -->
+        <section class="collection-section">
+            <div class="section-header">
+                <h2 class="collection-toggle" onclick="PinSearch.toggleCollection()">
+                    My Collection <span id="collection-arrow" class="arrow">&#9660;</span>
+                </h2>
+                <div class="collection-actions">
+                    <span id="collection-count" class="result-count"></span>
+                    <button class="btn-secondary" onclick="PinSearch.exportCollection()">Export CSV</button>
+                </div>
+            </div>
+            <div id="collection-grid" class="pin-grid"></div>
+        </section>
+    </div>
+</main>
+
+<script>
+    const initialHistory = {{ history_json | safe }};
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
