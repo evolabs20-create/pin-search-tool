@@ -9,8 +9,9 @@ from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 
 from models import Pin
-from scrapers import PinPicsScraper, PinTradingDBScraper, GoogleLensScraper
+from scrapers import PinPicsScraper, PinTradingDBScraper
 from exporters import save_csv
+from pin_identifier import get_search_queries
 import database
 
 app = Flask(__name__)
@@ -112,47 +113,50 @@ def api_image_search():
     limit = request.form.get("limit", 20, type=int)
 
     try:
-        # Step 1: Google Lens reverse image search
-        lens = GoogleLensScraper(delay=1.5)
-        lens_results = lens.search_by_image(filepath, limit=10)
+        # Step 1: Claude Vision identifies the pin
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return jsonify({"error": "ANTHROPIC_API_KEY not configured on server"}), 500
 
-        # Step 2: Extract pin candidates
-        candidates = GoogleLensScraper.extract_pin_candidates(lens_results)
-        if not candidates:
-            for r in lens_results:
-                title = r.get("title", "").strip()
-                if title:
-                    candidates.append(title)
-                    break
+        queries, identification = get_search_queries(filepath, api_key)
 
-        # Step 3: Cross-reference with pin databases
+        if not queries:
+            return jsonify({
+                "error": "Could not identify the pin from the image",
+                "identification": identification,
+            }), 200
+
+        # Step 2: Search pin databases with Claude's identified queries
         scrapers = _get_scrapers(source)
         all_pins = []
         seen = set()
-        for candidate in candidates[:3]:
+        for query in queries[:3]:
             for scraper in scrapers:
                 try:
-                    if candidate.isdigit():
-                        pins = scraper.lookup(candidate, limit=limit)
+                    if query.isdigit():
+                        pins = scraper.lookup(query, limit=limit)
                     else:
-                        pins = scraper.search(candidate, limit=limit)
+                        pins = scraper.search(query, limit=limit)
                     for pin in pins:
                         key = (pin.name, pin.pin_number, pin.source)
                         if key not in seen:
                             seen.add(key)
                             all_pins.append(pin)
-                except Exception:
-                    pass
+                except Exception as e:
+                    app.logger.error(f"{scraper.source_name} search error: {e}")
 
         result = [p.to_dict() for p in all_pins]
         _mark_collection(result)
-        database.add_search_history("image", filename, len(result))
+        database.add_search_history("image", identification.get("description", filename), len(result))
         return jsonify({
             "results": result,
             "count": len(result),
-            "lens_matches": lens_results[:5],
-            "candidates_used": candidates[:3],
+            "identification": identification,
+            "queries_used": queries[:3],
         })
+    except Exception as e:
+        app.logger.error(f"Image search error: {e}")
+        return jsonify({"error": str(e)}), 500
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)

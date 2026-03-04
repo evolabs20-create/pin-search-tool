@@ -140,10 +140,14 @@ const PinSearch = {
                 body: formData,
             });
             const data = await resp.json();
-            if (data.error) {
+            if (data.error && !data.results) {
                 this.showError(data.error);
             } else {
-                this.renderResults(data.results, data.count);
+                // Show AI identification info if available
+                if (data.identification) {
+                    this.showIdentification(data.identification, data.queries_used);
+                }
+                this.renderResults(data.results || [], data.count || 0);
                 this.refreshHistory();
             }
         } catch (err) {
@@ -151,6 +155,37 @@ const PinSearch = {
         } finally {
             this.hideLoading();
         }
+    },
+
+    showIdentification(info, queries) {
+        let el = document.getElementById('identification-info');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'identification-info';
+            el.className = 'identification-info';
+            const results = document.getElementById('results-section');
+            results.parentNode.insertBefore(el, results);
+        }
+
+        const chars = (info.characters || []).join(', ') || 'Unknown';
+        const theme = info.theme || '';
+        const desc = info.description || '';
+        const edition = info.edition || '';
+        const queriesHtml = (queries || []).map(q => `<span class="query-tag">${this.escapeHtml(q)}</span>`).join(' ');
+
+        el.innerHTML = `
+            <h3>AI Pin Identification</h3>
+            <p class="id-description">${this.escapeHtml(desc)}</p>
+            <div class="id-details">
+                ${chars ? `<span><strong>Characters:</strong> ${this.escapeHtml(chars)}</span>` : ''}
+                ${theme ? `<span><strong>Theme:</strong> ${this.escapeHtml(theme)}</span>` : ''}
+                ${edition ? `<span><strong>Edition:</strong> ${this.escapeHtml(edition)}</span>` : ''}
+                ${info.year ? `<span><strong>Year:</strong> ${this.escapeHtml(info.year)}</span>` : ''}
+                ${info.origin ? `<span><strong>Origin:</strong> ${this.escapeHtml(info.origin)}</span>` : ''}
+            </div>
+            ${queriesHtml ? `<div class="id-queries"><strong>Searched for:</strong> ${queriesHtml}</div>` : ''}
+        `;
+        el.style.display = 'block';
     },
 
     getSource() {
@@ -369,6 +404,8 @@ const PinSearch = {
     showLoading() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('results-section').style.display = 'none';
+        const idPanel = document.getElementById('identification-info');
+        if (idPanel) idPanel.style.display = 'none';
     },
 
     hideLoading() {
