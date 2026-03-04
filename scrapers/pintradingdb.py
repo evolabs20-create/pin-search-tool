@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -12,16 +13,24 @@ logger = logging.getLogger(__name__)
 
 class PinTradingDBScraper(BaseScraper):
     source_name = "PinTradingDB"
-    base_url = "https://pintradingdb.com"
+    base_url = "https://www.pintradingdb.com"
 
     def search(self, query: str, limit: int = 20) -> List[Pin]:
-        """Search PinTradingDB by keyword."""
-        url = f"{self.base_url}/search"
-        html = self.fetch(url, params={"q": query})
+        """Search PinTradingDB by keyword using AJAX endpoint."""
+        url = f"{self.base_url}/ajaxPinList.php"
+        html = self.fetch(url, params={
+            "searchString": query,
+            "pinPage": "1",
+            "sortBy": "releaseDate",
+            "sortOrder": "desc",
+        })
 
-        # Fallback: try POST-based search
         if not html:
-            html = self.post(f"{self.base_url}/search", data={"search": query})
+            # Fallback to the main page
+            html = self.fetch(
+                f"{self.base_url}/pinList.php",
+                params={"searchString": query, "pinPage": "1"},
+            )
 
         if not html:
             logger.warning("PinTradingDB search returned no response")
@@ -31,7 +40,7 @@ class PinTradingDBScraper(BaseScraper):
 
     def lookup(self, pin_number: str, limit: int = 20) -> List[Pin]:
         """Look up a pin by number on PinTradingDB."""
-        # Try direct number search
+        # Try direct detail page
         url = f"{self.base_url}/pin/{pin_number}"
         html = self.fetch(url)
 
@@ -46,64 +55,61 @@ class PinTradingDBScraper(BaseScraper):
     def _parse_search_results(self, html: str, limit: int) -> List[Pin]:
         soup = BeautifulSoup(html, "lxml")
         pins = []
+        seen = set()
 
-        # Try common result container patterns
-        items = (
-            soup.select(".pin-card")
-            or soup.select(".pin-item")
-            or soup.select(".search-result")
-            or soup.select(".thumbnail")
-        )
+        # PinTradingDB results: <a href="pin/{id}"> with <img> and <strong> for edition
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
 
-        for item in items[:limit]:
-            pin = self._parse_card(item)
+            # Match pin detail links: "pin/12345" or "/pin/12345"
+            if not re.search(r"(?:^|/)pin/(\d+)$", href):
+                continue
+
+            full_url = urljoin(self.base_url + "/", href)
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+
+            pin = self._parse_result_link(a, full_url)
             if pin:
                 pins.append(pin)
-
-        # Fallback: look for links to pin detail pages
-        if not pins:
-            pins = self._parse_links_fallback(soup, limit)
+                if len(pins) >= limit:
+                    break
 
         return pins
 
-    def _parse_card(self, item) -> Optional[Pin]:
+    def _parse_result_link(self, a_tag, detail_url: str) -> Optional[Pin]:
         try:
-            name = None
-            pin_number = None
-            edition_size = None
+            # Extract pin number from URL
+            match = re.search(r"/pin/(\d+)", detail_url)
+            pin_number = match.group(1) if match else None
+
+            # Image: <img src="https://www.ptdb.co/storedImages/{id}_thumb.jpg">
+            img = a_tag.find("img")
             image_url = None
-            detail_url = None
+            alt_text = None
+            if img:
+                if img.get("src"):
+                    image_url = img["src"]
+                alt_text = img.get("alt", "") or img.get("title", "")
 
-            # Extract link
-            a = item.find("a", href=True)
-            if a:
-                detail_url = urljoin(self.base_url, a["href"])
-                if not name:
-                    name = a.get_text(strip=True)
+            # Edition from <strong> tag (e.g., "OE", "LE 3750", "LR")
+            strong = a_tag.find("strong")
+            edition_size = strong.get_text(strip=True) if strong else None
 
-            # Title from heading or specific class
-            title_el = item.find(["h2", "h3", "h4"]) or item.select_one(".pin-title, .title")
-            if title_el:
-                name = title_el.get_text(strip=True)
+            # Name: full text minus the edition badge
+            full_text = a_tag.get_text(" ", strip=True)
+            name = full_text
+            if edition_size and edition_size in name:
+                name = name.replace(edition_size, "").strip()
 
-            # Image
-            img = item.find("img")
-            if img and img.get("src"):
-                image_url = urljoin(self.base_url, img["src"])
-
-            # Try to extract pin number from text
-            text = item.get_text(" ", strip=True)
-            for part in text.split():
-                if part.isdigit() and len(part) >= 3:
-                    pin_number = part
-                    break
-
-            # Edition info
-            for span in item.find_all(["span", "div", "p"]):
-                span_text = span.get_text(strip=True).lower()
-                if "edition" in span_text or "le " in span_text:
-                    edition_size = span.get_text(strip=True)
-                    break
+            # If name is empty, try alt text from image
+            if not name and alt_text:
+                # Alt text format: "{pin_id} - {Pin Name}"
+                if " - " in alt_text:
+                    name = alt_text.split(" - ", 1)[1].strip()
+                else:
+                    name = alt_text.strip()
 
             if not name:
                 return None
@@ -117,37 +123,11 @@ class PinTradingDBScraper(BaseScraper):
                 source_url=detail_url,
             )
         except Exception as e:
-            logger.debug(f"Failed to parse card: {e}")
+            logger.debug(f"Failed to parse result link: {e}")
             return None
 
-    def _parse_links_fallback(self, soup: BeautifulSoup, limit: int) -> List[Pin]:
-        pins = []
-        seen = set()
-
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "/pin/" not in href:
-                continue
-            full_url = urljoin(self.base_url, href)
-            if full_url in seen:
-                continue
-            seen.add(full_url)
-
-            name = a.get_text(strip=True)
-            if not name:
-                continue
-
-            pins.append(Pin(
-                name=name,
-                source=self.source_name,
-                source_url=full_url,
-            ))
-            if len(pins) >= limit:
-                break
-
-        return pins
-
     def _parse_detail_page(self, html: str, url: str) -> Optional[Pin]:
+        """Parse a PinTradingDB pin detail page."""
         soup = BeautifulSoup(html, "lxml")
         try:
             name = None
@@ -157,41 +137,48 @@ class PinTradingDBScraper(BaseScraper):
             edition_size = None
             image_url = None
 
-            title_el = soup.find("h1") or soup.find("title")
+            # Extract pin number from URL
+            match = re.search(r"/pin/(\d+)", url)
+            if match:
+                pin_number = match.group(1)
+
+            # Title
+            title_el = soup.find("h1")
             if title_el:
                 name = title_el.get_text(strip=True)
+            if not name:
+                title_tag = soup.find("title")
+                if title_tag:
+                    name = title_tag.get_text(strip=True).split("|")[0].strip()
 
-            # Parse detail fields
-            for row in soup.select("table tr, .detail-row, .info-row, dl dt"):
-                if row.name == "tr":
-                    cells = row.find_all("td")
-                    if len(cells) >= 2:
-                        label = cells[0].get_text(strip=True).lower()
-                        value = cells[1].get_text(strip=True)
-                        self._assign_field(label, value, locals())
-                elif row.name == "dt":
-                    dd = row.find_next_sibling("dd")
-                    if dd:
-                        label = row.get_text(strip=True).lower()
-                        value = dd.get_text(strip=True)
-                        self._assign_field(label, value, locals())
-
-            # Look for labeled spans/divs
-            for el in soup.find_all(["span", "div", "p"]):
-                text = el.get_text(strip=True).lower()
-                if "pin #" in text or "pin number" in text:
-                    pin_number = pin_number or text.split(":")[-1].strip().split()[-1]
-                elif "edition" in text:
-                    edition_size = edition_size or el.get_text(strip=True)
-                elif "series" in text or "collection" in text:
-                    series = series or text.split(":")[-1].strip()
-
-            # Image
+            # Find pin image from ptdb.co
             for img in soup.find_all("img"):
                 src = img.get("src", "")
-                if "pin" in src.lower() or "image" in src.lower():
-                    image_url = urljoin(self.base_url, src)
+                if "ptdb.co" in src or "storedImages" in src:
+                    image_url = src
                     break
+
+            # Parse table rows for metadata
+            for row in soup.find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True).lower()
+                    value = cells[1].get_text(strip=True)
+                    if "edition" in label:
+                        edition_size = value
+                    elif "release" in label and "date" in label:
+                        year = value
+                    elif "origin" in label:
+                        series = value
+                    elif "series" in label:
+                        series = value
+
+            # Also try text-based extraction as fallback
+            text = soup.get_text(" ", strip=True)
+            if not edition_size:
+                ed_match = re.search(r"(LE\s*\d[\d,]*|Open Edition|Limited Release)", text, re.I)
+                if ed_match:
+                    edition_size = ed_match.group(1)
 
             if not name:
                 return None
@@ -209,14 +196,3 @@ class PinTradingDBScraper(BaseScraper):
         except Exception as e:
             logger.error(f"Failed to parse detail page {url}: {e}")
             return None
-
-    @staticmethod
-    def _assign_field(label: str, value: str, local_vars: dict) -> None:
-        if "number" in label or "pin #" in label:
-            local_vars["pin_number"] = local_vars.get("pin_number") or value
-        elif "series" in label or "collection" in label:
-            local_vars["series"] = local_vars.get("series") or value
-        elif "year" in label or "date" in label:
-            local_vars["year"] = local_vars.get("year") or value
-        elif "edition" in label:
-            local_vars["edition_size"] = local_vars.get("edition_size") or value

@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -12,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 class PinPicsScraper(BaseScraper):
     source_name = "PinPics"
-    base_url = "https://www.pinpics.com"
+    base_url = "https://pinpics.com"
 
     def search(self, query: str, limit: int = 20) -> List[Pin]:
-        """Search PinPics by keyword/description."""
-        url = f"{self.base_url}/search.php"
-        html = self.fetch(url, params={"keysearch": query})
+        """Search PinPics pin database by keyword."""
+        url = f"{self.base_url}/pins/"
+        html = self.fetch(url, params={"filter_name": query, "sortdirection": "desc"})
         if not html:
             logger.warning("PinPics search returned no response")
             return []
@@ -25,73 +26,58 @@ class PinPicsScraper(BaseScraper):
 
     def lookup(self, pin_number: str, limit: int = 20) -> List[Pin]:
         """Look up a specific pin by number on PinPics."""
-        url = f"{self.base_url}/search.php"
-        html = self.fetch(url, params={"keysearch": pin_number, "searchtype": "pinnumber"})
-        if not html:
-            logger.warning("PinPics lookup returned no response")
-            return []
-        return self._parse_search_results(html, limit)
+        # Try direct detail page
+        url = f"{self.base_url}/pin/{pin_number}/"
+        html = self.fetch(url)
+        if html:
+            pin = self._parse_detail_page(html, url)
+            if pin:
+                return [pin]
+
+        # Fall back to searching by number
+        return self.search(pin_number, limit)
 
     def _parse_search_results(self, html: str, limit: int) -> List[Pin]:
         soup = BeautifulSoup(html, "lxml")
         pins = []
 
-        # Try multiple selectors to handle site layout variations
-        rows = soup.select("table.searchresults tr") or soup.select("table tr")
-
-        for row in rows[:limit + 5]:  # grab extra to account for header rows
-            cells = row.find_all("td")
-            if len(cells) < 2:
-                continue
-
-            pin = self._parse_row(cells)
+        # Each pin is a <li class="ipsDataItem" data-pin-wrapper="{id}">
+        for item in soup.select("li.ipsDataItem[data-pin-wrapper]"):
+            pin = self._parse_card(item)
             if pin:
                 pins.append(pin)
                 if len(pins) >= limit:
                     break
 
-        # Fallback: try parsing links that look like pin detail pages
-        if not pins:
-            pins = self._parse_links_fallback(soup, limit)
-
         return pins
 
-    def _parse_row(self, cells) -> Optional[Pin]:
+    def _parse_card(self, item) -> Optional[Pin]:
         try:
-            # Extract pin number and name from cells
-            text_parts = [c.get_text(strip=True) for c in cells]
+            pin_id = item.get("data-pin-wrapper", "")
 
-            # Look for a link to a detail page
-            link = None
-            for cell in cells:
-                a = cell.find("a", href=True)
-                if a and ("pinID" in a["href"] or "pin" in a["href"].lower()):
-                    link = urljoin(self.base_url, a["href"])
-                    break
+            # Image from .tbPinsGridImage img
+            image_url = None
+            img = item.select_one("div.tbPinsGridImage img")
+            if img and img.get("src"):
+                image_url = img["src"]
 
-            # Try to find an image
-            img_url = None
-            for cell in cells:
-                img = cell.find("img")
-                if img and img.get("src"):
-                    img_url = urljoin(self.base_url, img["src"])
-                    break
+            # Detail URL from the first link
+            detail_url = None
+            a_tag = item.select_one("div.tbPinsGridImage a[href]")
+            if a_tag:
+                detail_url = a_tag["href"]
 
-            # Build pin from available data
-            name = ""
+            # Pin number from h4 link (e.g., "PP184643")
             pin_number = None
-            series = None
+            h4_link = item.select_one("h4 a")
+            if h4_link:
+                pin_number = h4_link.get_text(strip=True)
 
-            for part in text_parts:
-                if not part:
-                    continue
-                # If it looks like a number, treat as pin number
-                if part.isdigit() and not pin_number:
-                    pin_number = part
-                elif not name:
-                    name = part
-                elif not series:
-                    series = part
+            # Pin name from .tbPinsTitle span
+            name = None
+            title_span = item.select_one("span.tbPinsTitle")
+            if title_span:
+                name = title_span.get("title") or title_span.get_text(strip=True)
 
             if not name:
                 return None
@@ -99,48 +85,16 @@ class PinPicsScraper(BaseScraper):
             return Pin(
                 name=name,
                 pin_number=pin_number,
-                series=series,
-                image_url=img_url,
+                image_url=image_url,
                 source=self.source_name,
-                source_url=link,
+                source_url=detail_url,
             )
         except Exception as e:
-            logger.debug(f"Failed to parse row: {e}")
+            logger.debug(f"Failed to parse card: {e}")
             return None
 
-    def _parse_links_fallback(self, soup: BeautifulSoup, limit: int) -> List[Pin]:
-        """Fallback parser: find all pin detail links."""
-        pins = []
-        seen = set()
-
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "pinID" not in href and "pin_id" not in href.lower():
-                continue
-            if href in seen:
-                continue
-            seen.add(href)
-
-            name = a.get_text(strip=True)
-            if not name:
-                continue
-
-            pins.append(Pin(
-                name=name,
-                source=self.source_name,
-                source_url=urljoin(self.base_url, href),
-            ))
-            if len(pins) >= limit:
-                break
-
-        return pins
-
-    def get_detail(self, pin_url: str) -> Optional[Pin]:
-        """Fetch full details from a pin's detail page."""
-        html = self.fetch(pin_url)
-        if not html:
-            return None
-
+    def _parse_detail_page(self, html: str, url: str) -> Optional[Pin]:
+        """Parse a PinPics pin detail page."""
         soup = BeautifulSoup(html, "lxml")
         try:
             name = None
@@ -150,32 +104,41 @@ class PinPicsScraper(BaseScraper):
             edition_size = None
             image_url = None
 
-            # Look for title
-            title_el = soup.find("h1") or soup.find("title")
+            # Extract pin number from URL
+            match = re.search(r"/pin/(\d+)", url)
+            if match:
+                pin_number = f"PP{match.group(1)}"
+
+            # Title
+            title_el = soup.find("h1")
             if title_el:
                 name = title_el.get_text(strip=True)
+            if not name:
+                title_tag = soup.find("title")
+                if title_tag:
+                    name = title_tag.get_text(strip=True).split(" - ")[0].strip()
 
-            # Parse info table/fields
-            for row in soup.select("table tr"):
-                cells = row.find_all("td")
-                if len(cells) >= 2:
-                    label = cells[0].get_text(strip=True).lower()
-                    value = cells[1].get_text(strip=True)
-                    if "pin" in label and "number" in label:
-                        pin_number = value
-                    elif "series" in label or "collection" in label:
-                        series = value
-                    elif "year" in label or "date" in label:
-                        year = value
-                    elif "edition" in label:
-                        edition_size = value
-
-            # Find main image
+            # Pin image
             for img in soup.find_all("img"):
                 src = img.get("src", "")
-                if "pin" in src.lower() or "image" in src.lower():
-                    image_url = urljoin(self.base_url, src)
+                if "/uploads/pins/" in src:
+                    image_url = src
                     break
+
+            # Parse metadata fields
+            text = soup.get_text(" ", strip=True)
+
+            edition_match = re.search(r"Edition[:\s]*([\w\s\d,]+?)(?:\s{2,}|Year|Origin|Price|$)", text)
+            if edition_match:
+                edition_size = edition_match.group(1).strip()[:50]
+
+            year_match = re.search(r"Year of Release[:\s]*(\d{4})", text)
+            if year_match:
+                year = year_match.group(1)
+
+            origin_match = re.search(r"Origin[:\s]*([\w\s]+?)(?:\s{2,}|Edition|Year|Price|$)", text)
+            if origin_match:
+                series = origin_match.group(1).strip()[:80]
 
             if not name:
                 return None
@@ -188,8 +151,8 @@ class PinPicsScraper(BaseScraper):
                 edition_size=edition_size,
                 image_url=image_url,
                 source=self.source_name,
-                source_url=pin_url,
+                source_url=url,
             )
         except Exception as e:
-            logger.error(f"Failed to parse detail page {pin_url}: {e}")
+            logger.error(f"Failed to parse detail page {url}: {e}")
             return None
