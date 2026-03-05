@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disney Pin Search Tool — search PinPics and PinTradingDB from the command line."""
+"""Disney Pin Search Tool — search PinPics, PinTradingDB, and eBay from the command line."""
 
 import argparse
 import logging
@@ -7,12 +7,13 @@ import sys
 from typing import List
 
 from models import Pin
-from scrapers import PinPicsScraper, PinTradingDBScraper, GoogleLensScraper
+from scrapers import PinPicsScraper, PinTradingDBScraper, GoogleLensScraper, eBayScraper
 from exporters import save_json, save_csv
 
 SCRAPERS = {
     "pinpics": PinPicsScraper,
     "pintradingdb": PinTradingDBScraper,
+    "ebay": eBayScraper,
 }
 
 
@@ -33,14 +34,18 @@ def build_parser() -> argparse.ArgumentParser:
     # image subcommand
     image_p = sub.add_parser("image", help="Search by image (reverse image search)")
     image_p.add_argument("image_path", help="Path to pin image file (jpg, png, etc.)")
+    
+    # ebay-sold subcommand
+    ebay_p = sub.add_parser("ebay-sold", help="Search eBay sold listings for price history")
+    ebay_p.add_argument("query", help="Search terms (e.g. 'Mickey Mouse')")
 
     # shared options
-    for p in (search_p, lookup_p, image_p):
+    for p in (search_p, lookup_p, image_p, ebay_p):
         p.add_argument(
             "--source",
-            choices=["pinpics", "pintradingdb", "all"],
+            choices=["pinpics", "pintradingdb", "ebay", "all"],
             default="all",
-            help="Which pin database to cross-reference (default: all)",
+            help="Which database to search (default: all)",
         )
         p.add_argument(
             "--output", "-o",
@@ -83,6 +88,12 @@ def run_search(args) -> List[Pin]:
         try:
             if args.command == "search":
                 pins = scraper.search(args.query, limit=args.limit)
+            elif args.command == "ebay-sold":
+                # Special case for eBay sold listings
+                if isinstance(scraper, eBayScraper):
+                    pins = scraper.search_sold(args.query, limit=args.limit)
+                else:
+                    continue
             else:
                 pins = scraper.lookup(args.pin_number, limit=args.limit)
 

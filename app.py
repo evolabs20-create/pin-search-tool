@@ -9,7 +9,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 
 from models import Pin
-from scrapers import PinPicsScraper, PinTradingDBScraper
+from scrapers import PinPicsScraper, PinTradingDBScraper, eBayScraper
 from exporters import save_csv
 from pin_identifier import get_search_queries
 import database
@@ -21,6 +21,7 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 SCRAPERS = {
     "pinpics": PinPicsScraper,
     "pintradingdb": PinTradingDBScraper,
+    "ebay": eBayScraper,
 }
 
 
@@ -94,6 +95,25 @@ def api_lookup():
     _mark_collection(result)
     database.add_search_history("lookup", pin_number, len(result))
     return jsonify({"results": result, "count": len(result)})
+
+
+@app.route("/api/ebay-sold")
+def api_ebay_sold():
+    """Search for sold eBay listings to get price history."""
+    q = request.args.get("q", "").strip()
+    limit = request.args.get("limit", 20, type=int)
+
+    if not q:
+        return jsonify({"error": "Missing query"}), 400
+
+    try:
+        scraper = eBayScraper()
+        pins = scraper.search_sold(q, limit=limit)
+        result = [p.to_dict() for p in pins]
+        return jsonify({"results": result, "count": len(result)})
+    except Exception as e:
+        app.logger.error(f"eBay sold search error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/image-search", methods=["POST"])
