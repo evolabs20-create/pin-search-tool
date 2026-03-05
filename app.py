@@ -11,8 +11,10 @@ from werkzeug.utils import secure_filename
 
 from models import Pin
 from scrapers import PinPicsScraper, PinTradingDBScraper, eBayScraper
-from exporters import save_csv
+from exporters import save_csv, save_research_csv
 from pin_identifier import get_search_queries
+from price_research import research_pin
+from sheets_export import export_research
 import database
 
 app = Flask(__name__)
@@ -195,6 +197,76 @@ def api_image_search():
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)
+
+
+# --- Price Research APIs ---
+
+@app.route("/api/research")
+def api_research():
+    """Run price research for a query — returns summary + all listings."""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Missing query"}), 400
+
+    active_limit = request.args.get("active_limit", 40, type=int)
+    sold_limit = request.args.get("sold_limit", 40, type=int)
+
+    try:
+        data = research_pin(q, active_limit=active_limit, sold_limit=sold_limit)
+        return jsonify(data)
+    except Exception as e:
+        app.logger.error(f"Research error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/research/export/csv")
+def api_research_export_csv():
+    """Download price research results as CSV."""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Missing query"}), 400
+
+    active_limit = request.args.get("active_limit", 40, type=int)
+    sold_limit = request.args.get("sold_limit", 40, type=int)
+
+    try:
+        data = research_pin(q, active_limit=active_limit, sold_limit=sold_limit)
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], "research_export.csv")
+        save_research_csv(data["summary"], data["active_listings"], data["sold_listings"], filepath)
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=f"pin_research_{q.replace(' ', '_')}.csv",
+        )
+    except Exception as e:
+        app.logger.error(f"Research CSV export error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/research/export/sheets", methods=["POST"])
+def api_research_export_sheets():
+    """Push research data to Google Sheets."""
+    body = request.get_json() or {}
+    q = body.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Missing query"}), 400
+
+    active_limit = body.get("active_limit", 40)
+    sold_limit = body.get("sold_limit", 40)
+
+    try:
+        data = research_pin(q, active_limit=active_limit, sold_limit=sold_limit)
+        result = export_research(
+            data["summary"],
+            data["active_listings"],
+            data["sold_listings"],
+        )
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        app.logger.error(f"Research Sheets export error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # --- Collection APIs ---

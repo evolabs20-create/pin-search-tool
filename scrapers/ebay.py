@@ -9,7 +9,7 @@ from typing import List, Optional
 from urllib.parse import quote
 
 from scrapers.base import BaseScraper
-from models import Pin
+from models import Pin, EbayListing
 
 
 class eBayScraper(BaseScraper):
@@ -227,6 +227,152 @@ class eBayScraper(BaseScraper):
         except Exception as e:
             print(f"eBay sold search error: {e}")
             return []
+
+    def search_listings(self, query: str, limit: int = 40) -> List[EbayListing]:
+        """Search active eBay listings with full listing data."""
+        if not self.app_id:
+            return []
+
+        url = "https://svcs.ebay.com/services/search/FindingService/v1"
+        params = {
+            "OPERATION-NAME": "findItemsByKeywords",
+            "SERVICE-VERSION": "1.0.0",
+            "SECURITY-APPNAME": self.app_id,
+            "RESPONSE-DATA-FORMAT": "JSON",
+            "keywords": f"Disney pin {query}",
+            "paginationInput.entriesPerPage": min(limit, 100),
+            "sortOrder": "PricePlusShippingLowest",
+        }
+        headers = {"X-EBAY-SOA-SECURITY-APPNAME": self.app_id}
+
+        try:
+            response = self.session.get(url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            listings = []
+            search_result = data.get("findItemsByKeywordsResponse", [{}])[0]
+            items = search_result.get("searchResult", [{}])[0].get("item", [])
+
+            for item in items:
+                try:
+                    listing = self._parse_listing(item, sold=False)
+                    if listing:
+                        listings.append(listing)
+                except Exception as e:
+                    print(f"Error parsing eBay listing: {e}")
+            return listings[:limit]
+        except Exception as e:
+            print(f"eBay search_listings error: {e}")
+            return []
+
+    def search_sold_listings(self, query: str, limit: int = 40) -> List[EbayListing]:
+        """Search sold/completed eBay listings with full listing data."""
+        if not self.app_id:
+            return []
+
+        url = "https://svcs.ebay.com/services/search/FindingService/v1"
+        params = {
+            "OPERATION-NAME": "findCompletedItems",
+            "SERVICE-VERSION": "1.0.0",
+            "SECURITY-APPNAME": self.app_id,
+            "RESPONSE-DATA-FORMAT": "JSON",
+            "keywords": f"Disney pin {query}",
+            "paginationInput.entriesPerPage": min(limit, 100),
+            "sortOrder": "EndTimeSoonest",
+            "itemFilter(0).name": "SoldItemsOnly",
+            "itemFilter(0).value": "true",
+        }
+        headers = {"X-EBAY-SOA-SECURITY-APPNAME": self.app_id}
+
+        try:
+            response = self.session.get(url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            listings = []
+            search_result = data.get("findCompletedItemsResponse", [{}])[0]
+            items = search_result.get("searchResult", [{}])[0].get("item", [])
+
+            for item in items:
+                try:
+                    listing = self._parse_listing(item, sold=True)
+                    if listing:
+                        listings.append(listing)
+                except Exception as e:
+                    print(f"Error parsing eBay sold listing: {e}")
+            return listings[:limit]
+        except Exception as e:
+            print(f"eBay search_sold_listings error: {e}")
+            return []
+
+    def _parse_listing(self, item: dict, sold: bool = False) -> Optional[EbayListing]:
+        """Parse a Finding API item into an EbayListing object with full details."""
+        try:
+            title = item.get("title", [""])[0] if isinstance(item.get("title"), list) else item.get("title", "")
+
+            # Price
+            selling_status = item.get("sellingStatus", [{}])[0]
+            current_price = selling_status.get("currentPrice", [{}])[0]
+            price_value = float(current_price.get("__value__", "0"))
+            currency = current_price.get("@currencyId", "USD")
+
+            # Shipping
+            shipping_info = item.get("shippingInfo", [{}])[0]
+            shipping_cost_data = shipping_info.get("shippingServiceCost", [{}])
+            shipping_cost = None
+            if shipping_cost_data:
+                cost_obj = shipping_cost_data[0] if isinstance(shipping_cost_data, list) else shipping_cost_data
+                try:
+                    shipping_cost = float(cost_obj.get("__value__", "0"))
+                except (ValueError, TypeError):
+                    pass
+
+            # Condition
+            condition_data = item.get("condition", [{}])
+            condition = None
+            if condition_data:
+                cond_obj = condition_data[0] if isinstance(condition_data, list) else condition_data
+                condition = cond_obj.get("conditionDisplayName", [None])
+                if isinstance(condition, list):
+                    condition = condition[0] if condition else None
+
+            # Seller
+            seller_info = item.get("sellerInfo", [{}])[0] if item.get("sellerInfo") else {}
+            seller_name = None
+            if seller_info:
+                seller_name = seller_info.get("sellerUserName", [None])
+                if isinstance(seller_name, list):
+                    seller_name = seller_name[0] if seller_name else None
+
+            # URLs
+            view_url = item.get("viewItemURL", [""])[0] if isinstance(item.get("viewItemURL"), list) else item.get("viewItemURL", "")
+            gallery_url = item.get("galleryURL", [""])[0] if isinstance(item.get("galleryURL"), list) else item.get("galleryURL", "")
+
+            # Dates
+            end_time = item.get("listingInfo", [{}])[0].get("endTime", [None])
+            if isinstance(end_time, list):
+                end_time = end_time[0] if end_time else None
+            # Format dates for display (trim timezone)
+            end_date = end_time[:10] if end_time else None
+            sold_date = end_date if sold else None
+
+            return EbayListing(
+                title=title,
+                price=price_value,
+                currency=currency,
+                ebay_url=view_url,
+                image_url=gallery_url if gallery_url else None,
+                condition=condition,
+                shipping_cost=shipping_cost,
+                seller_name=seller_name,
+                sold_date=sold_date,
+                end_date=end_date,
+                listing_type="sold" if sold else "active",
+            )
+        except Exception as e:
+            print(f"Error parsing eBay listing: {e}")
+            return None
 
     def _parse_item(self, item: dict, sold: bool = False) -> Optional[Pin]:
         """Parse a Finding API item into a Pin object."""

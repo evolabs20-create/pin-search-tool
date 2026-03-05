@@ -32,6 +32,7 @@
                 <button class="tab active" data-tab="keyword" onclick="PinSearch.switchTab('keyword')">Keyword Search</button>
                 <button class="tab" data-tab="lookup" onclick="PinSearch.switchTab('lookup')">Pin Number</button>
                 <button class="tab" data-tab="image" onclick="PinSearch.switchTab('image')">Image Search</button>
+                <button class="tab" data-tab="research" onclick="PinSearch.switchTab('research')">Price Research</button>
             </div>
 
             <!-- Keyword Search Panel -->
@@ -68,6 +69,17 @@
                 <button class="btn-primary btn-image-search" onclick="PinSearch.searchByImage()" style="display:none" id="btn-image-search">Search by Image</button>
             </div>
 
+            <!-- Price Research Panel -->
+            <div class="tab-panel" id="panel-research">
+                <form onsubmit="event.preventDefault(); PinSearch.runResearch()">
+                    <div class="input-row">
+                        <input type="text" id="research-input" placeholder="e.g. Mickey Mouse pin, Haunted Mansion LE..." autocomplete="off">
+                        <button type="submit" class="btn-primary">Research Prices</button>
+                    </div>
+                </form>
+                <p class="research-hint">Search eBay for active and sold listings (last 90 days) to get pricing data.</p>
+            </div>
+
             <!-- Source Filter -->
             <div class="source-filter">
                 <span class="filter-label">Source:</span>
@@ -94,6 +106,44 @@
                 <span id="result-count" class="result-count"></span>
             </div>
             <div id="results-grid" class="pin-grid"></div>
+        </section>
+
+        <!-- Price Research Results -->
+        <section id="research-section" class="research-section" style="display:none">
+            <div class="section-header">
+                <h2>Price Research</h2>
+                <div class="research-export-actions">
+                    <button class="btn-secondary" onclick="PinSearch.exportResearchCSV()">Download CSV</button>
+                    <button class="btn-secondary" onclick="PinSearch.exportResearchSheets()">Export to Google Sheets</button>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div id="research-summary" class="research-summary-grid"></div>
+
+            <!-- Detail Table -->
+            <div id="research-details" class="research-details">
+                <div class="research-detail-header" onclick="PinSearch.toggleResearchDetails()">
+                    <h3>All Listings <span id="research-detail-arrow" class="arrow">&#9660;</span></h3>
+                    <span id="research-detail-count" class="result-count"></span>
+                </div>
+                <div id="research-table-wrap" class="research-table-wrap">
+                    <table id="research-table" class="research-table">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Title</th>
+                                <th>Price</th>
+                                <th>Shipping</th>
+                                <th>Condition</th>
+                                <th>Seller</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="research-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </section>
 
         <!-- My Collection -->

@@ -1,6 +1,8 @@
 const PinSearch = {
     selectedImageFile: null,
     collectionVisible: true,
+    researchData: null,
+    researchDetailsVisible: true,
 
     // === Init ===
 
@@ -184,6 +186,7 @@ const PinSearch = {
                 ${info.origin ? `<span><strong>Origin:</strong> ${this.escapeHtml(info.origin)}</span>` : ''}
             </div>
             ${queriesHtml ? `<div class="id-queries"><strong>Searched for:</strong> ${queriesHtml}</div>` : ''}
+            ${queries && queries.length > 0 ? `<button class="btn-research-bridge" onclick="PinSearch.startResearchFromImage('${this.escapeAttr(queries[0])}')">Research Prices on eBay</button>` : ''}
         `;
         el.style.display = 'block';
     },
@@ -265,6 +268,138 @@ const PinSearch = {
             </div>
         `;
         return card;
+    },
+
+    // === Price Research ===
+
+    async runResearch() {
+        const query = document.getElementById('research-input').value.trim();
+        if (!query) return;
+
+        this.showLoading();
+        this.hideError();
+        document.getElementById('research-section').style.display = 'none';
+
+        try {
+            const resp = await fetch(`/api/research?q=${encodeURIComponent(query)}`);
+            const data = await resp.json();
+            if (data.error) {
+                this.showError(data.error);
+            } else {
+                this.researchData = { query, ...data };
+                this.renderResearch(data);
+            }
+        } catch (err) {
+            this.showError('Price research failed. Please try again.');
+        } finally {
+            this.hideLoading();
+        }
+    },
+
+    renderResearch(data) {
+        const section = document.getElementById('research-section');
+        const summaryEl = document.getElementById('research-summary');
+        const tbody = document.getElementById('research-table-body');
+        const countEl = document.getElementById('research-detail-count');
+        const s = data.summary;
+
+        // Summary cards
+        const fmtPrice = (v) => v != null ? `$${Number(v).toFixed(2)}` : 'N/A';
+
+        summaryEl.innerHTML = `
+            <div class="research-card research-card-active">
+                <h4>Active Listings</h4>
+                <div class="research-stat-big">${s.active_count}</div>
+                <div class="research-stats">
+                    <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.active_low)}</span></div>
+                    <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.active_high)}</span></div>
+                    <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.active_avg)}</span></div>
+                </div>
+                ${s.cheapest_active_url ? `<a href="${this.escapeHtml(s.cheapest_active_url)}" target="_blank" class="research-link">View Cheapest</a>` : ''}
+            </div>
+            <div class="research-card research-card-sold">
+                <h4>Sold (Last 90 Days)</h4>
+                <div class="research-stat-big">${s.sold_count}</div>
+                <div class="research-stats">
+                    <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.sold_low)}</span></div>
+                    <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.sold_high)}</span></div>
+                    <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.sold_avg)}</span></div>
+                </div>
+                ${s.last_sold_date ? `<div class="research-last-sold">Last sold: ${this.escapeHtml(s.last_sold_date)}</div>` : ''}
+                ${s.most_recent_sold_url ? `<a href="${this.escapeHtml(s.most_recent_sold_url)}" target="_blank" class="research-link">View Most Recent</a>` : ''}
+            </div>
+        `;
+
+        // Detail table
+        const allListings = [
+            ...(data.active_listings || []).map(l => ({ ...l, _type: 'active' })),
+            ...(data.sold_listings || []).map(l => ({ ...l, _type: 'sold' })),
+        ];
+        countEl.textContent = `${allListings.length} listing${allListings.length !== 1 ? 's' : ''}`;
+
+        tbody.innerHTML = '';
+        allListings.forEach(l => {
+            const tr = document.createElement('tr');
+            const badge = l._type === 'active'
+                ? '<span class="badge-active">Active</span>'
+                : '<span class="badge-sold">Sold</span>';
+            const date = l._type === 'sold' ? (l.sold_date || '') : (l.end_date || '');
+            const titleLink = l.ebay_url
+                ? `<a href="${this.escapeHtml(l.ebay_url)}" target="_blank">${this.escapeHtml(l.title)}</a>`
+                : this.escapeHtml(l.title);
+
+            tr.innerHTML = `
+                <td>${badge}</td>
+                <td class="research-title-cell">${titleLink}</td>
+                <td>$${Number(l.price).toFixed(2)}</td>
+                <td>${l.shipping_cost != null ? '$' + Number(l.shipping_cost).toFixed(2) : 'N/A'}</td>
+                <td>${this.escapeHtml(l.condition || 'N/A')}</td>
+                <td>${this.escapeHtml(l.seller_name || 'N/A')}</td>
+                <td>${this.escapeHtml(date)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        section.style.display = 'block';
+    },
+
+    toggleResearchDetails() {
+        const wrap = document.getElementById('research-table-wrap');
+        const arrow = document.getElementById('research-detail-arrow');
+        this.researchDetailsVisible = !this.researchDetailsVisible;
+        wrap.style.display = this.researchDetailsVisible ? 'block' : 'none';
+        arrow.classList.toggle('collapsed', !this.researchDetailsVisible);
+    },
+
+    exportResearchCSV() {
+        if (!this.researchData) return;
+        window.location.href = `/api/research/export/csv?q=${encodeURIComponent(this.researchData.query)}`;
+    },
+
+    async exportResearchSheets() {
+        if (!this.researchData) return;
+
+        try {
+            const resp = await fetch('/api/research/export/sheets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: this.researchData.query }),
+            });
+            const data = await resp.json();
+            if (data.url) {
+                window.open(data.url, '_blank');
+            } else {
+                this.showError(data.error || 'Google Sheets export failed.');
+            }
+        } catch (err) {
+            this.showError('Google Sheets export failed. Check server configuration.');
+        }
+    },
+
+    startResearchFromImage(query) {
+        this.switchTab('research');
+        document.getElementById('research-input').value = query;
+        this.runResearch();
     },
 
     // === Collection ===
@@ -404,6 +539,7 @@ const PinSearch = {
     showLoading() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('results-section').style.display = 'none';
+        document.getElementById('research-section').style.display = 'none';
         const idPanel = document.getElementById('identification-info');
         if (idPanel) idPanel.style.display = 'none';
     },

@@ -5,3 +5,4 @@ uploads/
 pins.db
 *.csv
 *.json
+service_account.json

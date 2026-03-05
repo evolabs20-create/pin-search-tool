@@ -663,6 +663,221 @@ body {
     color: white;
 }
 
+/* === Price Research === */
+
+.research-hint {
+    font-size: 0.8rem;
+    color: var(--gray);
+    margin-top: 0.5rem;
+}
+
+.research-section {
+    margin-bottom: 2rem;
+}
+
+.research-export-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.research-summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+@media (max-width: 600px) {
+    .research-summary-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.research-card {
+    background: var(--white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.25rem;
+    border-top: 4px solid;
+}
+
+.research-card-active {
+    border-top-color: #10B981;
+}
+
+.research-card-sold {
+    border-top-color: var(--red);
+}
+
+.research-card h4 {
+    font-size: 0.9rem;
+    color: var(--gray);
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.research-stat-big {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--purple);
+    margin-bottom: 0.75rem;
+}
+
+.research-stats {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.research-stats > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.stat-label {
+    font-size: 0.7rem;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stat-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1a1a2e;
+}
+
+.research-link {
+    font-size: 0.8rem;
+    color: var(--purple-lt);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.research-link:hover {
+    text-decoration: underline;
+}
+
+.research-last-sold {
+    font-size: 0.8rem;
+    color: var(--gray);
+    margin-bottom: 0.5rem;
+}
+
+.research-details {
+    background: var(--white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.research-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.research-detail-header h3 {
+    font-size: 1rem;
+    color: var(--purple);
+}
+
+.research-detail-header:hover {
+    background: #faf8f5;
+}
+
+.research-table-wrap {
+    overflow-x: auto;
+}
+
+.research-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.research-table th {
+    background: var(--cream);
+    color: var(--purple);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.research-table td {
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid var(--gray-lt);
+    vertical-align: middle;
+}
+
+.research-table tr:hover td {
+    background: #faf8f5;
+}
+
+.research-title-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.research-title-cell a {
+    color: var(--blue-lt);
+    text-decoration: none;
+}
+
+.research-title-cell a:hover {
+    text-decoration: underline;
+}
+
+.badge-active {
+    display: inline-block;
+    background: #D1FAE5;
+    color: #065F46;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.badge-sold {
+    display: inline-block;
+    background: #FEE2E2;
+    color: #991B1B;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.btn-research-bridge {
+    margin-top: 0.75rem;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dk) 100%);
+    color: white;
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.btn-research-bridge:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(201, 168, 76, 0.3);
+}
+
 /* === Collection Section === */
 
 .collection-section {
