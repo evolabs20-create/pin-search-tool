@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disney Pin Search — Flask Web Application."""
 
+import base64
 import json
 import os
 import tempfile
@@ -164,6 +165,20 @@ def api_image_search():
                             all_pins.append(pin)
                 except Exception as e:
                     app.logger.error(f"{scraper.source_name} search error: {e}")
+
+        # Step 3: eBay image search (parallel visual matching)
+        try:
+            with open(filepath, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+            ebay_scraper = eBayScraper()
+            ebay_image_pins = ebay_scraper.search_by_image(image_b64, limit=limit)
+            for pin in ebay_image_pins:
+                key = (pin.name, pin.pin_number, pin.source)
+                if key not in seen:
+                    seen.add(key)
+                    all_pins.append(pin)
+        except Exception as e:
+            app.logger.error(f"eBay image search error: {e}")
 
         result = [p.to_dict() for p in all_pins]
         _mark_collection(result)
