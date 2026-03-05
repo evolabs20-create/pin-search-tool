@@ -1,8 +1,6 @@
 const PinSearch = {
     selectedImageFile: null,
     collectionVisible: true,
-    researchData: null,
-    researchDetailsVisible: true,
 
     // === Init ===
 
@@ -87,12 +85,11 @@ const PinSearch = {
         const query = document.getElementById('keyword-input').value.trim();
         if (!query) return;
 
-        const source = this.getSource();
         this.showLoading();
         this.hideError();
 
         try {
-            const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}&source=${source}`);
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
             const data = await resp.json();
             if (data.error) {
                 this.showError(data.error);
@@ -108,41 +105,14 @@ const PinSearch = {
         }
     },
 
-    async lookupByNumber() {
-        const pinNumber = document.getElementById('pin-number-input').value.trim();
-        if (!pinNumber) return;
-
-        const source = this.getSource();
-        this.showLoading();
-        this.hideError();
-
-        try {
-            const resp = await fetch(`/api/lookup?pin_number=${encodeURIComponent(pinNumber)}&source=${source}`);
-            const data = await resp.json();
-            if (data.error) {
-                this.showError(data.error);
-            } else {
-                this.renderResults(data.results, data.count);
-                if (data.pricing) this.renderResearchInline(data.pricing);
-                this.refreshHistory();
-            }
-        } catch (err) {
-            this.showError('Lookup failed. Please try again.');
-        } finally {
-            this.hideLoading();
-        }
-    },
-
     async searchByImage() {
         if (!this.selectedImageFile) {
             this.showError('Please select or drop an image first.');
             return;
         }
 
-        const source = this.getSource();
         const formData = new FormData();
         formData.append('image', this.selectedImageFile);
-        formData.append('source', source);
 
         this.showLoading();
         this.hideError();
@@ -161,6 +131,9 @@ const PinSearch = {
                     this.showIdentification(data.identification, data.queries_used);
                 }
                 this.renderResults(data.results || [], data.count || 0);
+                if (data.ebay_matches && data.ebay_matches.length > 0) {
+                    this.renderEbayMatches(data.ebay_matches);
+                }
                 if (data.pricing) this.renderResearchInline(data.pricing);
                 this.refreshHistory();
             }
@@ -197,6 +170,37 @@ const PinSearch = {
         el.style.display = 'block';
     },
 
+    renderEbayMatches(matches) {
+        const container = document.getElementById('ebay-matches');
+        if (!container) return;
+
+        const cards = matches.map(pin => {
+            const imgHtml = pin.image_url
+                ? `<img src="${this.escapeHtml(pin.image_url)}" alt="${this.escapeHtml(pin.name)}" loading="lazy" onerror="this.style.display='none'">`
+                : '';
+            const priceHtml = pin.price ? `<span class="ebay-match-price">$${Number(pin.price).toFixed(2)}</span>` : '';
+            const linkHtml = pin.source_url
+                ? `<a href="${this.escapeHtml(pin.source_url)}" target="_blank" class="ebay-match-link">View on eBay</a>`
+                : '';
+            return `
+                <div class="ebay-match-card">
+                    <div class="ebay-match-image">${imgHtml}</div>
+                    <div class="ebay-match-body">
+                        <p class="ebay-match-title">${this.escapeHtml(pin.name)}</p>
+                        ${priceHtml}
+                        ${linkHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = `
+            <div class="section-header"><h2>eBay Image Matches</h2><span class="result-count">${matches.length} match${matches.length !== 1 ? 'es' : ''}</span></div>
+            <div class="ebay-matches-grid">${cards}</div>
+        `;
+        container.style.display = 'block';
+    },
+
     renderResearchInline(data) {
         const container = document.getElementById('inline-pricing');
         if (!container) return;
@@ -223,7 +227,7 @@ const PinSearch = {
             listingsHtml = `
                 <table class="research-table"><thead><tr><th>Type</th><th>Title</th><th>Price</th><th>Shipping</th></tr></thead>
                 <tbody>${rows}</tbody></table>
-                ${allListings.length > 10 ? `<p class="research-hint">Showing 10 of ${allListings.length} listings. See Price Research tab for full details.</p>` : ''}
+                ${allListings.length > 10 ? `<p class="research-hint">Showing 10 of ${allListings.length} listings.</p>` : ''}
             `;
         }
 
@@ -254,11 +258,6 @@ const PinSearch = {
             ${listingsHtml}
         `;
         container.style.display = 'block';
-    },
-
-    getSource() {
-        const checked = document.querySelector('input[name="source"]:checked');
-        return checked ? checked.value : 'all';
     },
 
     // === Results Rendering ===
@@ -295,8 +294,6 @@ const PinSearch = {
             ? `<div class="pin-card-image"><img src="${this.escapeHtml(pin.image_url)}" alt="${this.escapeHtml(pin.name)}" loading="lazy" onerror="this.parentElement.classList.add('no-image'); this.replaceWith(document.createTextNode('No Image'))"></div>`
             : `<div class="pin-card-image no-image"><span>No Image</span></div>`;
 
-        const badgeClass = (pin.source || '').includes('PinPics') ? 'badge-pinpics' : 'badge-pintradingdb';
-
         let metaHtml = '';
         if (pin.year || pin.edition_size) {
             metaHtml = '<div class="pin-meta">';
@@ -316,8 +313,8 @@ const PinSearch = {
         }
 
         const sourceLink = pin.source_url
-            ? `<a href="${this.escapeHtml(pin.source_url)}" target="_blank" class="badge ${badgeClass}">${this.escapeHtml(pin.source)}</a>`
-            : `<span class="badge ${badgeClass}">${this.escapeHtml(pin.source || 'Unknown')}</span>`;
+            ? `<a href="${this.escapeHtml(pin.source_url)}" target="_blank" class="badge">${this.escapeHtml(pin.source)}</a>`
+            : `<span class="badge">${this.escapeHtml(pin.source || 'Unknown')}</span>`;
 
         card.innerHTML = `
             ${imgHtml}
@@ -333,138 +330,6 @@ const PinSearch = {
             </div>
         `;
         return card;
-    },
-
-    // === Price Research ===
-
-    async runResearch() {
-        const query = document.getElementById('research-input').value.trim();
-        if (!query) return;
-
-        this.showLoading();
-        this.hideError();
-        document.getElementById('research-section').style.display = 'none';
-
-        try {
-            const resp = await fetch(`/api/research?q=${encodeURIComponent(query)}`);
-            const data = await resp.json();
-            if (data.error) {
-                this.showError(data.error);
-            } else {
-                this.researchData = { query, ...data };
-                this.renderResearch(data);
-            }
-        } catch (err) {
-            this.showError('Price research failed. Please try again.');
-        } finally {
-            this.hideLoading();
-        }
-    },
-
-    renderResearch(data) {
-        const section = document.getElementById('research-section');
-        const summaryEl = document.getElementById('research-summary');
-        const tbody = document.getElementById('research-table-body');
-        const countEl = document.getElementById('research-detail-count');
-        const s = data.summary;
-
-        // Summary cards
-        const fmtPrice = (v) => v != null ? `$${Number(v).toFixed(2)}` : 'N/A';
-
-        summaryEl.innerHTML = `
-            <div class="research-card research-card-active">
-                <h4>Active Listings</h4>
-                <div class="research-stat-big">${s.active_count}</div>
-                <div class="research-stats">
-                    <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.active_low)}</span></div>
-                    <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.active_high)}</span></div>
-                    <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.active_avg)}</span></div>
-                </div>
-                ${s.cheapest_active_url ? `<a href="${this.escapeHtml(s.cheapest_active_url)}" target="_blank" class="research-link">View Cheapest</a>` : ''}
-            </div>
-            <div class="research-card research-card-sold">
-                <h4>Sold (Last 90 Days)</h4>
-                <div class="research-stat-big">${s.sold_count}</div>
-                <div class="research-stats">
-                    <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.sold_low)}</span></div>
-                    <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.sold_high)}</span></div>
-                    <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.sold_avg)}</span></div>
-                </div>
-                ${s.last_sold_date ? `<div class="research-last-sold">Last sold: ${this.escapeHtml(s.last_sold_date)}</div>` : ''}
-                ${s.most_recent_sold_url ? `<a href="${this.escapeHtml(s.most_recent_sold_url)}" target="_blank" class="research-link">View Most Recent</a>` : ''}
-            </div>
-        `;
-
-        // Detail table
-        const allListings = [
-            ...(data.active_listings || []).map(l => ({ ...l, _type: 'active' })),
-            ...(data.sold_listings || []).map(l => ({ ...l, _type: 'sold' })),
-        ];
-        countEl.textContent = `${allListings.length} listing${allListings.length !== 1 ? 's' : ''}`;
-
-        tbody.innerHTML = '';
-        allListings.forEach(l => {
-            const tr = document.createElement('tr');
-            const badge = l._type === 'active'
-                ? '<span class="badge-active">Active</span>'
-                : '<span class="badge-sold">Sold</span>';
-            const date = l._type === 'sold' ? (l.sold_date || '') : (l.end_date || '');
-            const titleLink = l.ebay_url
-                ? `<a href="${this.escapeHtml(l.ebay_url)}" target="_blank">${this.escapeHtml(l.title)}</a>`
-                : this.escapeHtml(l.title);
-
-            tr.innerHTML = `
-                <td>${badge}</td>
-                <td class="research-title-cell">${titleLink}</td>
-                <td>$${Number(l.price).toFixed(2)}</td>
-                <td>${l.shipping_cost != null ? '$' + Number(l.shipping_cost).toFixed(2) : 'N/A'}</td>
-                <td>${this.escapeHtml(l.condition || 'N/A')}</td>
-                <td>${this.escapeHtml(l.seller_name || 'N/A')}</td>
-                <td>${this.escapeHtml(date)}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-        section.style.display = 'block';
-    },
-
-    toggleResearchDetails() {
-        const wrap = document.getElementById('research-table-wrap');
-        const arrow = document.getElementById('research-detail-arrow');
-        this.researchDetailsVisible = !this.researchDetailsVisible;
-        wrap.style.display = this.researchDetailsVisible ? 'block' : 'none';
-        arrow.classList.toggle('collapsed', !this.researchDetailsVisible);
-    },
-
-    exportResearchCSV() {
-        if (!this.researchData) return;
-        window.location.href = `/api/research/export/csv?q=${encodeURIComponent(this.researchData.query)}`;
-    },
-
-    async exportResearchSheets() {
-        if (!this.researchData) return;
-
-        try {
-            const resp = await fetch('/api/research/export/sheets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ q: this.researchData.query }),
-            });
-            const data = await resp.json();
-            if (data.url) {
-                window.open(data.url, '_blank');
-            } else {
-                this.showError(data.error || 'Google Sheets export failed.');
-            }
-        } catch (err) {
-            this.showError('Google Sheets export failed. Check server configuration.');
-        }
-    },
-
-    startResearchFromImage(query) {
-        this.switchTab('research');
-        document.getElementById('research-input').value = query;
-        this.runResearch();
     },
 
     // === Collection ===
@@ -561,7 +426,7 @@ const PinSearch = {
 
         list.innerHTML = '';
         entries.forEach(entry => {
-            const icons = { keyword: '\uD83D\uDD0D', lookup: '#', image: '\uD83D\uDCF7' };
+            const icons = { keyword: '\uD83D\uDD0D', image: '\uD83D\uDCF7' };
             const icon = icons[entry.search_type] || '\uD83D\uDD0D';
 
             const item = document.createElement('div');
@@ -582,10 +447,6 @@ const PinSearch = {
             document.getElementById('keyword-input').value = entry.query;
             this.switchTab('keyword');
             this.searchByKeyword();
-        } else if (entry.search_type === 'lookup') {
-            document.getElementById('pin-number-input').value = entry.query;
-            this.switchTab('lookup');
-            this.lookupByNumber();
         }
         // Image searches can't be replayed (file is gone)
     },
@@ -604,9 +465,10 @@ const PinSearch = {
     showLoading() {
         document.getElementById('loading').style.display = 'block';
         document.getElementById('results-section').style.display = 'none';
-        document.getElementById('research-section').style.display = 'none';
         const idPanel = document.getElementById('identification-info');
         if (idPanel) idPanel.style.display = 'none';
+        const ebayMatches = document.getElementById('ebay-matches');
+        if (ebayMatches) ebayMatches.style.display = 'none';
         const inlinePricing = document.getElementById('inline-pricing');
         if (inlinePricing) inlinePricing.style.display = 'none';
     },
