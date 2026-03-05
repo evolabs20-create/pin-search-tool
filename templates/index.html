@@ -9,14 +9,18 @@
 <body>
 
 <header class="header">
-    <div class="castle"></div>
     <h1 class="header-title">Disney Pin Search</h1>
     <p class="header-sub">Search, discover, and collect your favorite Disney pins</p>
 </header>
 
 <main class="layout">
+    <!-- Mobile History Toggle -->
+    <button class="mobile-history-toggle" id="mobile-history-btn" onclick="PinSearch.toggleMobileHistory()">
+        Search History <span class="toggle-arrow">&#9660;</span>
+    </button>
+
     <!-- Sidebar: Search History -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>Search History</h2>
             <button class="btn-text" onclick="PinSearch.clearHistory()">Clear</button>

@@ -12,6 +12,15 @@ const PinSearch = {
         this.loadCollection();
     },
 
+    // === Mobile History Toggle ===
+
+    toggleMobileHistory() {
+        const sidebar = document.getElementById('sidebar');
+        const btn = document.getElementById('mobile-history-btn');
+        sidebar.classList.toggle('open');
+        btn.classList.toggle('open');
+    },
+
     // === Tabs ===
 
     switchTab(tabName) {
