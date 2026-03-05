@@ -105,7 +105,7 @@ class GoogleLensScraper(BaseScraper):
 
     def _parse_lens_results(self, html: str, limit: int) -> List[dict]:
         """Parse Google Lens visual match results."""
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         results = []
 
         # Google Lens shows visual matches in various containers
@@ -152,7 +152,7 @@ class GoogleLensScraper(BaseScraper):
 
     def _parse_google_results(self, html: str, limit: int) -> List[dict]:
         """Parse standard Google search results page."""
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         results = []
 
         for g in soup.select("div.g, div.tF2Cxc"):
@@ -230,6 +230,19 @@ class GoogleLensScraper(BaseScraper):
                     candidates.append(clean)
 
         return candidates
+
+    @staticmethod
+    def build_identification(results: List[dict]) -> dict:
+        """Build a summary identification dict from Google Lens results."""
+        titles = [r["title"] for r in results[:5] if r.get("title")]
+        thumbnail = next((r["thumbnail_url"] for r in results if r.get("thumbnail_url")), "")
+        description = titles[0] if titles else "No visual matches found"
+        return {
+            "source": "Google Lens",
+            "description": description,
+            "top_matches": titles[:5],
+            "thumbnail": thumbnail,
+        }
 
     @staticmethod
     def _guess_mime(path: Path) -> str:

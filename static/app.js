@@ -89,6 +89,7 @@ const PinSearch = {
                 this.showError(data.error);
             } else {
                 this.renderResults(data.results, data.count);
+                if (data.pricing) this.renderResearchInline(data.pricing);
                 this.refreshHistory();
             }
         } catch (err) {
@@ -113,6 +114,7 @@ const PinSearch = {
                 this.showError(data.error);
             } else {
                 this.renderResults(data.results, data.count);
+                if (data.pricing) this.renderResearchInline(data.pricing);
                 this.refreshHistory();
             }
         } catch (err) {
@@ -145,11 +147,12 @@ const PinSearch = {
             if (data.error && !data.results) {
                 this.showError(data.error);
             } else {
-                // Show AI identification info if available
+                // Show Google Lens identification info if available
                 if (data.identification) {
                     this.showIdentification(data.identification, data.queries_used);
                 }
                 this.renderResults(data.results || [], data.count || 0);
+                if (data.pricing) this.renderResearchInline(data.pricing);
                 this.refreshHistory();
             }
         } catch (err) {
@@ -169,26 +172,79 @@ const PinSearch = {
             results.parentNode.insertBefore(el, results);
         }
 
-        const chars = (info.characters || []).join(', ') || 'Unknown';
-        const theme = info.theme || '';
         const desc = info.description || '';
-        const edition = info.edition || '';
+        const topMatches = (info.top_matches || []).slice(0, 3);
         const queriesHtml = (queries || []).map(q => `<span class="query-tag">${this.escapeHtml(q)}</span>`).join(' ');
+        const matchesHtml = topMatches.length > 0
+            ? `<div class="id-details">${topMatches.map(m => `<span>${this.escapeHtml(m)}</span>`).join('')}</div>`
+            : '';
 
         el.innerHTML = `
-            <h3>AI Pin Identification</h3>
+            <h3>Google Lens Identification</h3>
             <p class="id-description">${this.escapeHtml(desc)}</p>
-            <div class="id-details">
-                ${chars ? `<span><strong>Characters:</strong> ${this.escapeHtml(chars)}</span>` : ''}
-                ${theme ? `<span><strong>Theme:</strong> ${this.escapeHtml(theme)}</span>` : ''}
-                ${edition ? `<span><strong>Edition:</strong> ${this.escapeHtml(edition)}</span>` : ''}
-                ${info.year ? `<span><strong>Year:</strong> ${this.escapeHtml(info.year)}</span>` : ''}
-                ${info.origin ? `<span><strong>Origin:</strong> ${this.escapeHtml(info.origin)}</span>` : ''}
-            </div>
+            ${matchesHtml}
             ${queriesHtml ? `<div class="id-queries"><strong>Searched for:</strong> ${queriesHtml}</div>` : ''}
-            ${queries && queries.length > 0 ? `<button class="btn-research-bridge" onclick="PinSearch.startResearchFromImage('${this.escapeAttr(queries[0])}')">Research Prices on eBay</button>` : ''}
         `;
         el.style.display = 'block';
+    },
+
+    renderResearchInline(data) {
+        const container = document.getElementById('inline-pricing');
+        if (!container) return;
+
+        const s = data.summary;
+        const fmtPrice = (v) => v != null ? `$${Number(v).toFixed(2)}` : 'N/A';
+
+        const allListings = [
+            ...(data.active_listings || []).map(l => ({ ...l, _type: 'active' })),
+            ...(data.sold_listings || []).map(l => ({ ...l, _type: 'sold' })),
+        ];
+
+        let listingsHtml = '';
+        if (allListings.length > 0) {
+            const rows = allListings.slice(0, 10).map(l => {
+                const badge = l._type === 'active'
+                    ? '<span class="badge-active">Active</span>'
+                    : '<span class="badge-sold">Sold</span>';
+                const titleLink = l.ebay_url
+                    ? `<a href="${this.escapeHtml(l.ebay_url)}" target="_blank">${this.escapeHtml(l.title)}</a>`
+                    : this.escapeHtml(l.title);
+                return `<tr><td>${badge}</td><td class="research-title-cell">${titleLink}</td><td>$${Number(l.price).toFixed(2)}</td><td>${l.shipping_cost != null ? '$' + Number(l.shipping_cost).toFixed(2) : 'N/A'}</td></tr>`;
+            }).join('');
+            listingsHtml = `
+                <table class="research-table"><thead><tr><th>Type</th><th>Title</th><th>Price</th><th>Shipping</th></tr></thead>
+                <tbody>${rows}</tbody></table>
+                ${allListings.length > 10 ? `<p class="research-hint">Showing 10 of ${allListings.length} listings. See Price Research tab for full details.</p>` : ''}
+            `;
+        }
+
+        container.innerHTML = `
+            <div class="section-header"><h2>eBay Pricing</h2></div>
+            <div class="research-summary-grid">
+                <div class="research-card research-card-active">
+                    <h4>Active Listings</h4>
+                    <div class="research-stat-big">${s.active_count}</div>
+                    <div class="research-stats">
+                        <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.active_low)}</span></div>
+                        <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.active_high)}</span></div>
+                        <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.active_avg)}</span></div>
+                    </div>
+                    ${s.cheapest_active_url ? `<a href="${this.escapeHtml(s.cheapest_active_url)}" target="_blank" class="research-link">View Cheapest</a>` : ''}
+                </div>
+                <div class="research-card research-card-sold">
+                    <h4>Sold (Last 90 Days)</h4>
+                    <div class="research-stat-big">${s.sold_count}</div>
+                    <div class="research-stats">
+                        <div><span class="stat-label">Low</span><span class="stat-value">${fmtPrice(s.sold_low)}</span></div>
+                        <div><span class="stat-label">High</span><span class="stat-value">${fmtPrice(s.sold_high)}</span></div>
+                        <div><span class="stat-label">Avg</span><span class="stat-value">${fmtPrice(s.sold_avg)}</span></div>
+                    </div>
+                    ${s.last_sold_date ? `<div class="research-last-sold">Last sold: ${this.escapeHtml(s.last_sold_date)}</div>` : ''}
+                </div>
+            </div>
+            ${listingsHtml}
+        `;
+        container.style.display = 'block';
     },
 
     getSource() {
@@ -542,6 +598,8 @@ const PinSearch = {
         document.getElementById('research-section').style.display = 'none';
         const idPanel = document.getElementById('identification-info');
         if (idPanel) idPanel.style.display = 'none';
+        const inlinePricing = document.getElementById('inline-pricing');
+        if (inlinePricing) inlinePricing.style.display = 'none';
     },
 
     hideLoading() {

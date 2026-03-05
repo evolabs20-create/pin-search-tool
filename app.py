@@ -4,15 +4,14 @@
 import base64
 import json
 import os
-import tempfile
 
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 
 from models import Pin
 from scrapers import PinPicsScraper, PinTradingDBScraper, eBayScraper
+from scrapers.google_lens import GoogleLensScraper
 from exporters import save_csv, save_research_csv
-from pin_identifier import get_search_queries
 from price_research import research_pin
 from sheets_export import export_research
 import database
@@ -42,6 +41,15 @@ def _mark_collection(results: list) -> list:
             pin_dict.get("source", ""),
         )
     return results
+
+
+def _get_pricing(query: str) -> dict | None:
+    """Run price research and return pricing dict, or None on failure."""
+    try:
+        return research_pin(query, active_limit=20, sold_limit=20)
+    except Exception as e:
+        app.logger.error(f"Auto-pricing error for '{query}': {e}")
+        return None
 
 
 # --- Pages ---
@@ -74,7 +82,11 @@ def api_search():
     result = [p.to_dict() for p in all_pins]
     _mark_collection(result)
     database.add_search_history("keyword", q, len(result))
-    return jsonify({"results": result, "count": len(result)})
+    pricing = _get_pricing(q)
+    resp = {"results": result, "count": len(result)}
+    if pricing:
+        resp["pricing"] = pricing
+    return jsonify(resp)
 
 
 @app.route("/api/lookup")
@@ -97,7 +109,11 @@ def api_lookup():
     result = [p.to_dict() for p in all_pins]
     _mark_collection(result)
     database.add_search_history("lookup", pin_number, len(result))
-    return jsonify({"results": result, "count": len(result)})
+    pricing = _get_pricing(f"disney pin {pin_number}")
+    resp = {"results": result, "count": len(result)}
+    if pricing:
+        resp["pricing"] = pricing
+    return jsonify(resp)
 
 
 @app.route("/api/ebay-sold")
@@ -136,12 +152,13 @@ def api_image_search():
     limit = request.form.get("limit", 20, type=int)
 
     try:
-        # Step 1: Claude Vision identifies the pin
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            return jsonify({"error": "ANTHROPIC_API_KEY not configured on server"}), 500
+        # Step 1: Google Lens identifies the pin
+        lens = GoogleLensScraper()
+        lens_results = lens.search_by_image(filepath, limit=10)
+        candidates = GoogleLensScraper.extract_pin_candidates(lens_results)
+        identification = GoogleLensScraper.build_identification(lens_results)
 
-        queries, identification = get_search_queries(filepath, api_key)
+        queries = candidates[:3] if candidates else []
 
         if not queries:
             return jsonify({
@@ -149,11 +166,11 @@ def api_image_search():
                 "identification": identification,
             }), 200
 
-        # Step 2: Search pin databases with Claude's identified queries
+        # Step 2: Search pin databases with Google Lens identified queries
         scrapers = _get_scrapers(source)
         all_pins = []
         seen = set()
-        for query in queries[:3]:
+        for query in queries:
             for scraper in scrapers:
                 try:
                     if query.isdigit():
@@ -185,12 +202,19 @@ def api_image_search():
         result = [p.to_dict() for p in all_pins]
         _mark_collection(result)
         database.add_search_history("image", identification.get("description", filename), len(result))
-        return jsonify({
+
+        # Auto-pricing using the best query
+        pricing = _get_pricing(queries[0])
+
+        resp = {
             "results": result,
             "count": len(result),
             "identification": identification,
-            "queries_used": queries[:3],
-        })
+            "queries_used": queries,
+        }
+        if pricing:
+            resp["pricing"] = pricing
+        return jsonify(resp)
     except Exception as e:
         app.logger.error(f"Image search error: {e}")
         return jsonify({"error": str(e)}), 500
