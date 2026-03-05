@@ -6,7 +6,9 @@ import re
 import time
 import requests
 from typing import List, Optional
-from urllib.parse import quote
+from urllib.parse import quote_plus
+
+from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from models import Pin, EbayListing
@@ -80,11 +82,18 @@ class eBayScraper(BaseScraper):
 
     def search(self, query: str, limit: int = 20) -> List[Pin]:
         """Search eBay for Disney pins."""
+        pins = self._search_api(query, limit)
+        if not pins:
+            print("eBay API returned no results, trying web scraping fallback")
+            scraped = self._scrape_search(query, sold=False, limit=limit)
+            pins = [self._scraped_to_pin(d) for d in scraped]
+        return pins
+
+    def _search_api(self, query: str, limit: int = 20) -> List[Pin]:
+        """Search via the eBay Finding API."""
         if not self.app_id:
-            print("eBay App ID not configured. Skipping.")
             return []
 
-        # Use eBay Finding API
         url = "https://svcs.ebay.com/services/search/FindingService/v1"
 
         params = {
@@ -184,8 +193,16 @@ class eBayScraper(BaseScraper):
 
     def search_sold(self, query: str, limit: int = 20) -> List[Pin]:
         """Search for sold/completed listings to get price history."""
+        pins = self._search_sold_api(query, limit)
+        if not pins:
+            print("eBay API returned no sold results, trying web scraping fallback")
+            scraped = self._scrape_search(query, sold=True, limit=limit)
+            pins = [self._scraped_to_pin(d) for d in scraped]
+        return pins
+
+    def _search_sold_api(self, query: str, limit: int = 20) -> List[Pin]:
+        """Search sold items via the eBay Finding API."""
         if not self.app_id:
-            print("eBay App ID not configured. Skipping.")
             return []
 
         url = "https://svcs.ebay.com/services/search/FindingService/v1"
@@ -230,6 +247,15 @@ class eBayScraper(BaseScraper):
 
     def search_listings(self, query: str, limit: int = 40) -> List[EbayListing]:
         """Search active eBay listings with full listing data."""
+        listings = self._search_listings_api(query, limit)
+        if not listings:
+            print("eBay API returned no listings, trying web scraping fallback")
+            scraped = self._scrape_search(query, sold=False, limit=limit)
+            listings = [self._scraped_to_listing(d) for d in scraped]
+        return listings
+
+    def _search_listings_api(self, query: str, limit: int = 40) -> List[EbayListing]:
+        """Search active listings via the eBay Finding API."""
         if not self.app_id:
             return []
 
@@ -268,6 +294,15 @@ class eBayScraper(BaseScraper):
 
     def search_sold_listings(self, query: str, limit: int = 40) -> List[EbayListing]:
         """Search sold/completed eBay listings with full listing data."""
+        listings = self._search_sold_listings_api(query, limit)
+        if not listings:
+            print("eBay API returned no sold listings, trying web scraping fallback")
+            scraped = self._scrape_search(query, sold=True, limit=limit)
+            listings = [self._scraped_to_listing(d) for d in scraped]
+        return listings
+
+    def _search_sold_listings_api(self, query: str, limit: int = 40) -> List[EbayListing]:
+        """Search sold listings via the eBay Finding API."""
         if not self.app_id:
             return []
 
@@ -305,6 +340,145 @@ class eBayScraper(BaseScraper):
         except Exception as e:
             print(f"eBay search_sold_listings error: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # Web-scraping fallback helpers
+    # ------------------------------------------------------------------
+
+    def _scrape_search(self, query: str, sold: bool = False, limit: int = 20) -> list:
+        """Fetch an eBay HTML search page and return parsed item dicts."""
+        encoded = quote_plus(f"Disney pin {query}")
+        url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}&_sacat=0"
+        if sold:
+            url += "&LH_Complete=1&LH_Sold=1"
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+
+        try:
+            resp = self.session.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            return self._parse_search_html(resp.text, sold=sold, limit=limit)
+        except Exception as e:
+            print(f"eBay scrape error: {e}")
+            return []
+
+    def _parse_search_html(self, html: str, sold: bool = False, limit: int = 20) -> List[dict]:
+        """Parse eBay search result HTML into a list of item dicts."""
+        soup = BeautifulSoup(html, "html.parser")
+        items = []
+
+        for li in soup.select("li.s-item"):
+            # Skip the first "Shop on eBay" placeholder
+            title_el = li.select_one(".s-item__title")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            if not title or title.lower() == "shop on ebay":
+                continue
+
+            # Price
+            price_el = li.select_one(".s-item__price")
+            price_text = price_el.get_text(strip=True) if price_el else ""
+            price_val = self._parse_price_text(price_text)
+
+            # Link
+            link_el = li.select_one("a.s-item__link")
+            link = link_el["href"] if link_el and link_el.has_attr("href") else ""
+
+            # Image
+            img_el = li.select_one(".s-item__image-wrapper img")
+            image_url = None
+            if img_el:
+                image_url = img_el.get("src") or img_el.get("data-src") or ""
+
+            # Shipping
+            ship_el = li.select_one(".s-item__shipping, .s-item__freeXDays")
+            shipping_text = ship_el.get_text(strip=True) if ship_el else ""
+            shipping_cost = self._parse_shipping_text(shipping_text)
+
+            # Condition
+            cond_el = li.select_one(".SECONDARY_INFO")
+            condition = cond_el.get_text(strip=True) if cond_el else None
+
+            items.append({
+                "title": title,
+                "price": price_val,
+                "link": link,
+                "image_url": image_url,
+                "shipping_cost": shipping_cost,
+                "condition": condition,
+                "sold": sold,
+            })
+
+            if len(items) >= limit:
+                break
+
+        return items
+
+    @staticmethod
+    def _parse_price_text(text: str) -> float:
+        """Extract a numeric price from text like '$12.99' or '$5.00 to $15.00'."""
+        # Take the first price found
+        m = re.search(r'\$?([\d,]+\.?\d*)', text.replace(",", ""))
+        return float(m.group(1)) if m else 0.0
+
+    @staticmethod
+    def _parse_shipping_text(text: str) -> Optional[float]:
+        """Extract shipping cost; returns 0.0 for free shipping, None if unknown."""
+        if not text:
+            return None
+        low = text.lower()
+        if "free" in low:
+            return 0.0
+        m = re.search(r'\$?([\d,]+\.?\d*)', text.replace(",", ""))
+        return float(m.group(1)) if m else None
+
+    def _scraped_to_pin(self, d: dict) -> Pin:
+        """Convert a scraped item dict to a Pin."""
+        title = d["title"]
+        pin_number = None
+        m = re.search(r'#?(\d{4,6})', title)
+        if m:
+            pin_number = m.group(1)
+
+        listing_type = "SOLD" if d.get("sold") else "ACTIVE"
+        price_str = f"{d['price']:.2f} USD ({listing_type})" if d["price"] else f"N/A ({listing_type})"
+
+        return Pin(
+            name=title,
+            pin_number=pin_number,
+            series="eBay Listing",
+            year=None,
+            edition_size=price_str,
+            image_url=d.get("image_url") or None,
+            source="ebay",
+            source_url=d.get("link", ""),
+        )
+
+    def _scraped_to_listing(self, d: dict) -> EbayListing:
+        """Convert a scraped item dict to an EbayListing."""
+        sold = d.get("sold", False)
+        return EbayListing(
+            title=d["title"],
+            price=d["price"],
+            currency="USD",
+            ebay_url=d.get("link", ""),
+            image_url=d.get("image_url") or None,
+            condition=d.get("condition"),
+            shipping_cost=d.get("shipping_cost"),
+            seller_name=None,
+            sold_date=None,
+            end_date=None,
+            listing_type="sold" if sold else "active",
+        )
 
     def _parse_listing(self, item: dict, sold: bool = False) -> Optional[EbayListing]:
         """Parse a Finding API item into an EbayListing object with full details."""
